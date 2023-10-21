@@ -48,7 +48,7 @@ THE SOFTWARE.
 #define BREW_PIN_OUT              D5
 #define SWITCH_IN                 D6
 
-#define BNO055_SAMPLERATE_DELAY_MS  10 //how often to read data from the board
+#define BNO055_SAMPLERATE_DELAY_MS  50 //how often to read data from the board
 
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29, &Wire1);
 
@@ -285,15 +285,16 @@ void loop() {
   WDT.refresh();
   BLE.poll();
 
-  if (sensor_ready)
+  if (sensor_ready && switch_state == 1)
     read_sensor();
+
 
   if (digitalRead(BREW_PIN_IN) == LOW) {
     if (brew_state == 0) {
       bleSerial.println(F("BREW started"));
       brew_state = 1;
-      delay(100);
       motor_enable(true);
+      delay(100);
     }
   } else {
     if (brew_state == 1) {
