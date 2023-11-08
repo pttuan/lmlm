@@ -32,6 +32,7 @@ bool lunarGateway::connect(BLEDevice *dev){
     return false;
   if (dev->connect()) {
     Serial.println("Connected");
+    dev->setMaxMtu(517);
   } else {
     Serial.println("Failed to connect!");
     return false;

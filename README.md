@@ -1,3 +1,4 @@
+
 # lmlm
 Hardwares:
 - Arduino Uno R4 wifi
@@ -7,4 +8,11 @@ Hardwares:
 
 Software:
 - Tested on Arduino IDE
-  + Requirements libraries: ArduinoBLE
+- Requirements libraries:
+	- Adafruit Unified Sensor:
+	- ArduinoBLE:
+		- Modify BLEDevice class of the library to add the following function:
+void BLEDevice::setMaxMtu(int maxMtu)
+{
+	ATT.setMaxMtu(maxMtu);
+}

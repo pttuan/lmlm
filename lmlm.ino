@@ -32,24 +32,26 @@ THE SOFTWARE.
 
 #define WDT_TIMEOUT               5000
 
-#define PRESSURE_CUT_LOW          2000
 #define PRESSURE_REFILL           6000
+#define PRESSURE_CUT_LOW          2000
 #define PRESSURE_CUT_HIGH         9000
-#define PRESSURE_VOLTAGE_TOP      40000
+#define PRESSURE_DEFAULT          PRESSURE_CUT_HIGH
+#define PRESSURE_PROFILE_MAX      (PRESSURE_DEFAULT - 5)
+#define PRESSURE_VOLTAGE_TOP      47000
 #define PRESSURE_VOLTAGE_BOTTOM   65000
-#define ANGLE_CUT_LOW             0
+
+#define ANGLE_CUT_LOW             8
 #define ANGLE_CUT_HIGH            50
 #define ANGLE_NOISE_FILTER        100
-#define ANGLE_MIN_STEP            3
-#define LUNAR_ACTIVE_ANGLE        5
-#define LUNAR_WEIGH_RAMUP         3
-#define LUNAR_RAMUP_PRESSURE_STEP 300
-#define LUNAR_RAMUP_TIME_INTERVAL 100
-#define LUNAR_WEIGH_RAMDOWN       25
-#define LUNAR_RAMDOWN_PRESSURE_STEP 100
-#define LUNAR_RAMDOWN_TIME_INTERVAL 200
+#define ANGLE_MIN_STEP            2
 
-#define LUNAR_WEIGH_STOP          35
+#define LUNAR_WEIGH_RAMUP             3
+#define LUNAR_RAMUP_PRESSURE_STEP     300
+#define LUNAR_RAMUP_TIME_INTERVAL     100
+#define LUNAR_WEIGH_RAMDOWN           25
+#define LUNAR_RAMDOWN_PRESSURE_STEP   100
+#define LUNAR_RAMDOWN_TIME_INTERVAL   200
+#define LUNAR_WEIGH_STOP              35
 
 #define REFILL_PIN                D2
 #define BREW_PIN_IN               D3
@@ -59,6 +61,10 @@ THE SOFTWARE.
 
 #define BNO055_SAMPLERATE_DELAY_MS  50 //how often to read data from the board
 #define SCALE_SAMPLERATE_DELAY_MS  100 //how often to read data from the scale
+
+#if (PRESSURE_PROFILE_MAX >= PRESSURE_DEFAULT)
+#error "PRESSURE_PROFILE_MAX should be smaller than PRESSURE_DEFAULT"
+#endif
 
 bool ble_active;
 
@@ -235,12 +241,19 @@ void read_sensor()
     sensor_read_last_time = millis();
     bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
     angle = orientationData.orientation.x;
-    if (angle == 0)
-      return;
     if (angle < 0 || angle > ANGLE_NOISE_FILTER)
-      angle = ANGLE_CUT_LOW;
+      angle = 0;
+    if (!angle)
+      return;
     if (angle > ANGLE_CUT_HIGH)
       angle = ANGLE_CUT_HIGH;
+    else if (angle <= ANGLE_CUT_LOW) {
+      if (current_pressure == PRESSURE_DEFAULT) {
+        //at this time, sensor seems to work so set pressure to lowest value
+        motor_set_pressure(PRESSURE_CUT_LOW);
+      }
+      return;
+    }
     if (abs(angle - last_angle) > ANGLE_MIN_STEP)
       last_angle = angle;
     else
@@ -284,16 +297,16 @@ void motor_set_pressure(int32_t pressure)
   wave.offset(0);
 }
 
-void motor_defaut_pressure()
-{
-  motor_set_pressure(PRESSURE_CUT_HIGH);
-}
-
 void lunar_auto_ramup()
 {
+  int32_t pressure;
+
   if (millis() - auto_ramup_last_time > LUNAR_RAMUP_TIME_INTERVAL) {
     auto_ramup_last_time = millis();
-    motor_set_pressure(current_pressure + LUNAR_RAMUP_PRESSURE_STEP);
+    pressure = current_pressure + LUNAR_RAMUP_PRESSURE_STEP;
+    if (pressure >= PRESSURE_PROFILE_MAX)
+      pressure = PRESSURE_PROFILE_MAX;
+    motor_set_pressure(pressure);
   }
 }
 
@@ -339,7 +352,7 @@ void setup() {
   setup_sensor();
   wave.begin(1);
   WDT.begin(WDT_TIMEOUT);
-  motor_defaut_pressure();
+  motor_set_pressure(PRESSURE_DEFAULT);
 }
 
 // ================================================================
@@ -358,16 +371,19 @@ void loop() {
     if (found_lunar) {
       if (lunar.connected()) {
         read_scale();
-        if (lunar_active && (!sensor_ready || last_angle < LUNAR_ACTIVE_ANGLE)) {
+        if (lunar_active && (!sensor_ready || !last_angle)) {
           if (!lunar_session_init) {
             Serial.println("Lunar session started");
+            if (current_pressure != PRESSURE_CUT_LOW)
+              motor_set_pressure(PRESSURE_CUT_LOW);
             lunar_session_init = true;
             auto_ramup_last_time = 0;
             auto_ramdown_last_time = 0;
             lunar_start_timer = false;
             lunar_state = 0;
             lunar.stopTimer();
-            lunar.doTare();          
+            lunar.doTare();
+            lunar.weight = 0;
           } else {
             switch (lunar_state) {
             case 0:
@@ -392,6 +408,7 @@ void loop() {
               if (lunar.weight > LUNAR_WEIGH_STOP) {
                 lunar_state++;
                 Serial.println("Lunar stopped");
+                digitalWrite(BREW_PIN_OUT, LOW);
                 motor_enable(false);
                 lunar.stopTimer();
                 lunar_active = false;
@@ -414,13 +431,15 @@ void loop() {
     if (brew_state == 0) {
       Serial.println(F("BREW started"));
       brew_state = 1;
-      motor_enable(true);
+      digitalWrite(BREW_PIN_OUT, HIGH);
       delay(100);
+      motor_enable(true);
     }
   } else {
     if (brew_state == 1) {
       Serial.println(F("BREW stopped"));
       brew_state = 0;
+      digitalWrite(BREW_PIN_OUT, LOW);
       motor_enable(false);
     }
   }
@@ -447,13 +466,14 @@ void loop() {
       last_angle = 0;
       lunar_active = true;
       lunar_session_init = false;
-      motor_defaut_pressure();
+      motor_set_pressure(PRESSURE_DEFAULT);
     }
   } else {
     if (switch_state == 1) {
       Serial.println(F("Switch de-pressed"));
       switch_state = 0;
       lunar_active = false;
+      digitalWrite(BREW_PIN_OUT, LOW);
       motor_enable(false);
     }
   }
